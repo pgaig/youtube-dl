@@ -62,9 +62,12 @@ class CanvasIE(InfoExtractor):
         if not data:
             headers = self.geo_verification_headers()
             headers.update({'Content-Type': 'application/json'})
+            post_data = json.dumps({"identityToken": identityToken}).encode()
             token = self._download_json(
                 '%s/tokens' % self._REST_API_BASE, video_id,
-                'Downloading token', data=b'', headers=headers)['vrtPlayerToken']
+                'Downloading token', 
+                data=post_data,
+                headers=headers)['vrtPlayerToken']
             data = self._download_json(
                 '%s/videos/%s' % (self._REST_API_BASE, video_id),
                 video_id, 'Downloading video JSON', query={
@@ -259,7 +262,8 @@ class VrtNUIE(GigyaBaseIE):
         'expected_warnings': ['Unable to download asset JSON', 'is not a supported codec', 'Unknown MIME type'],
     }]
     _NETRC_MACHINE = 'vrtnu'
-    _APIKEY = '3_0Z2HujMtiWq_pkAjgnS2Md2E11a1AwZjYiBETtwNE-EoEHDINgtnvcAOpNgmrVGy'
+    _APIKEY = '3_qhEcPa5JGFROVwu5SWKqJ4mVOIkwlFNMSKwzPDAh8QZOtHqu6L4nD5Q7lk0eXOOG'
+    #_APIKEY = '3_0Z2HujMtiWq_pkAjgnS2Md2E11a1AwZjYiBETtwNE-EoEHDINgtnvcAOpNgmrVGy'
     _CONTEXT_ID = 'R3595707040'
 
     def _real_initialize(self):
@@ -275,23 +279,29 @@ class VrtNUIE(GigyaBaseIE):
             'targetEnv': 'jssdk',
             'loginID': username,
             'password': password,
-            'authMode': 'cookie',
+         #   'authMode': 'cookie',
         }
 
         auth_info = self._gigya_login(auth_data)
-
+        self.report_warning('auth_info' , auth_info)
+ 
         # Sometimes authentication fails for no good reason, retry
         login_attempt = 1
         while login_attempt <= 3:
             try:
                 # When requesting a token, no actual token is returned, but the
                 # necessary cookies are set.
+                login_cookie = 'glt_{api_key}={token}'.format(api_key=self._APIKEY, token=auth_info['sessionInfo']['login_token'])
+                self.report_warning('login_cookie' , login_cookie)
+ 
+
                 self._request_webpage(
                     'https://token.vrt.be',
                     None, note='Requesting a token', errnote='Could not get a token',
                     headers={
                         'Content-Type': 'application/json',
                         'Referer': 'https://www.vrt.be/vrtnu/',
+                        'Cookie': login_cookie,
                     },
                     data=json.dumps({
                         'uid': auth_info['UID'],
@@ -302,7 +312,7 @@ class VrtNUIE(GigyaBaseIE):
             except ExtractorError as e:
                 if isinstance(e.cause, compat_HTTPError) and e.cause.code == 401:
                     login_attempt += 1
-                    self.report_warning('Authentication failed')
+                    self.report_warning('Authentication failed', e)
                     self._sleep(1, None, msg_template='Waiting for %(timeout)s seconds before trying again')
                 else:
                     raise e
