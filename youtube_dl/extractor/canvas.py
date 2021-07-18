@@ -17,6 +17,7 @@ from ..utils import (
     str_or_none,
     strip_or_none,
     url_or_none,
+    urlencode_postdata,
 )
 
 
@@ -259,8 +260,10 @@ class VrtNUIE(GigyaBaseIE):
         'expected_warnings': ['Unable to download asset JSON', 'is not a supported codec', 'Unknown MIME type'],
     }]
     _NETRC_MACHINE = 'vrtnu'
-    _APIKEY = '3_0Z2HujMtiWq_pkAjgnS2Md2E11a1AwZjYiBETtwNE-EoEHDINgtnvcAOpNgmrVGy'
+#     _APIKEY = '3_0Z2HujMtiWq_pkAjgnS2Md2E11a1AwZjYiBETtwNE-EoEHDINgtnvcAOpNgmrVGy'
+    _APIKEY = '3_qhEcPa5JGFROVwu5SWKqJ4mVOIkwlFNMSKwzPDAh8QZOtHqu6L4nD5Q7lk0eXOOG'
     _CONTEXT_ID = 'R3595707040'
+    _REST_API_BASE = 'https://media-services-public.vrt.be/vualto-video-aggregator-web/rest/external/v2'
 
     def _real_initialize(self):
         self._login()
@@ -270,6 +273,29 @@ class VrtNUIE(GigyaBaseIE):
         if username is None:
             return
 
+        # 1. Get OIDCXSRF cookie
+        try:
+            urlh = self._request_webpage(
+                'https://www.vrt.be/vrtnu/sso/login', None,
+                query={'scope': 'openid,mid'},
+                note='Requesting a cookie', errnote='Could not get a cookie',
+                headers={}, data=b'')
+        except ExtractorError as e:
+            self.report_warning("Cookie request HTTP code: %s" % e.cause.code)
+            raise e
+
+        cookieResponseHeaders = urlh.headers.get_all('Set-Cookie')
+        cookie = ""
+        for h in cookieResponseHeaders:
+            match = re.search(r'^OIDCXSRF=(.*?);', h)
+            if match:
+                cookie = match.group(1)
+                break
+
+        if not cookie:
+            raise ExtractorError('Could not find OIDCXSRF cookie')
+
+        # 2. gigya auth
         auth_data = {
             'APIKey': self._APIKEY,
             'targetEnv': 'jssdk',
@@ -280,25 +306,23 @@ class VrtNUIE(GigyaBaseIE):
 
         auth_info = self._gigya_login(auth_data)
 
+        # 3. VRT login
         # Sometimes authentication fails for no good reason, retry
         login_attempt = 1
         while login_attempt <= 3:
             try:
-                # When requesting a token, no actual token is returned, but the
-                # necessary cookies are set.
                 self._request_webpage(
-                    'https://token.vrt.be',
-                    None, note='Requesting a token', errnote='Could not get a token',
-                    headers={
-                        'Content-Type': 'application/json',
-                        'Referer': 'https://www.vrt.be/vrtnu/',
-                    },
-                    data=json.dumps({
-                        'uid': auth_info['UID'],
-                        'uidsig': auth_info['UIDSignature'],
-                        'ts': auth_info['signatureTimestamp'],
-                        'email': auth_info['profile']['email'],
-                    }).encode('utf-8'))
+                    'https://login.vrt.be/perform_login',
+                    None,
+                    query={'client_id': 'vrtnu-site'},
+                    note='VRT login', errnote='VRT login failed',
+                    headers={},
+                    data=urlencode_postdata({
+                        'UID': auth_info['UID'],
+                        'UIDSignature': auth_info['UIDSignature'],
+                        'signatureTimestamp': auth_info['signatureTimestamp'],
+                        '_csrf': cookie
+                    }))
             except ExtractorError as e:
                 if isinstance(e.cause, compat_HTTPError) and e.cause.code == 401:
                     login_attempt += 1
